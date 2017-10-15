@@ -1,13 +1,21 @@
 package com.example.mapdemo;
 
 import android.app.Dialog;
+import android.content.DialogInterface;
+import android.graphics.Bitmap;
 import android.location.Location;
 import android.os.Bundle;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
+import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.animation.BounceInterpolator;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
@@ -24,9 +32,17 @@ import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
+import com.google.android.gms.maps.model.BitmapDescriptor;
+import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.Marker;
+import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.maps.android.ui.IconGenerator;
+import com.parse.ParsePush;
+
+import org.json.JSONException;
 
 import permissions.dispatcher.NeedsPermission;
 import permissions.dispatcher.RuntimePermissions;
@@ -34,7 +50,8 @@ import permissions.dispatcher.RuntimePermissions;
 import static com.google.android.gms.location.LocationServices.getFusedLocationProviderClient;
 
 @RuntimePermissions
-public class MapDemoActivity extends AppCompatActivity {
+public class MapDemoActivity extends AppCompatActivity implements
+        GoogleMap.OnMapLongClickListener, GoogleMap.OnMarkerDragListener{
 
     private SupportMapFragment mapFragment;
     private GoogleMap map;
@@ -44,6 +61,7 @@ public class MapDemoActivity extends AppCompatActivity {
     private long FASTEST_INTERVAL = 5000; /* 5 secs */
 
     private final static String KEY_LOCATION = "location";
+    public static final String CHANNEL_NAME = "android-2017";
 
     /*
      * Define a request code to send to Google Play services This code is
@@ -51,9 +69,12 @@ public class MapDemoActivity extends AppCompatActivity {
      */
     private final static int CONNECTION_FAILURE_RESOLUTION_REQUEST = 9000;
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ParsePush.subscribeInBackground(CHANNEL_NAME);
+
         setContentView(R.layout.map_demo_activity);
 
         if (TextUtils.isEmpty(getResources().getString(R.string.google_maps_api_key))) {
@@ -87,6 +108,9 @@ public class MapDemoActivity extends AppCompatActivity {
             Toast.makeText(this, "Map Fragment was loaded properly!", Toast.LENGTH_SHORT).show();
             MapDemoActivityPermissionsDispatcher.getMyLocationWithCheck(this);
             MapDemoActivityPermissionsDispatcher.startLocationUpdatesWithCheck(this);
+            map.setOnMapLongClickListener(this);
+            map.setOnMarkerDragListener(this);
+
         } else {
             Toast.makeText(this, "Error - Map was null!!", Toast.LENGTH_SHORT).show();
         }
@@ -169,7 +193,11 @@ public class MapDemoActivity extends AppCompatActivity {
         super.onResume();
 
         // Display the connection status
+        updateMap();
 
+    }
+
+    private void updateMap(){
         if (mCurrentLocation != null) {
             Toast.makeText(this, "GPS location was found!", Toast.LENGTH_SHORT).show();
             LatLng latLng = new LatLng(mCurrentLocation.getLatitude(), mCurrentLocation.getLongitude());
@@ -210,19 +238,142 @@ public class MapDemoActivity extends AppCompatActivity {
             return;
         }
 
-        // Report to the UI that the location was updated
+        if(mCurrentLocation == null){
+            mCurrentLocation = location;
+        }
 
-        mCurrentLocation = location;
-        String msg = "Updated Location: " +
-                Double.toString(location.getLatitude()) + "," +
-                Double.toString(location.getLongitude());
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+        // Report to the UI that the location was updated
+        if(Math.abs(location.getLatitude() - mCurrentLocation.getLatitude()) > 0.0001 ||
+                Math.abs(location.getAltitude() - mCurrentLocation.getAltitude()) > 0.0001 ){
+            mCurrentLocation = location;
+            updateMap();
+        }
+
+//        String msg = "Updated Location: " +
+//                Double.toString(location.getLatitude()) + "," +
+//                Double.toString(location.getLongitude());
+//        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
     public void onSaveInstanceState(Bundle savedInstanceState) {
         savedInstanceState.putParcelable(KEY_LOCATION, mCurrentLocation);
         super.onSaveInstanceState(savedInstanceState);
     }
+
+    @Override
+    public void onMapLongClick(LatLng latLng) {
+        Push.sendPushTest();
+        showAlertDialogForPoint(latLng);
+    }
+
+    // Display the alert that adds the marker
+    private void showAlertDialogForPoint(final LatLng point) {
+        // inflate message_item.xml view
+        View messageView = LayoutInflater.from(MapDemoActivity.this).
+                inflate(R.layout.item_message, null);
+        // Create alert dialog builder
+        AlertDialog.Builder alertDialogBuilder = new AlertDialog.Builder(this);
+        // set message_item.xml to AlertDialog builder
+        alertDialogBuilder.setView(messageView);
+
+        // Create alert dialog
+        final AlertDialog alertDialog = alertDialogBuilder.create();
+
+        // Configure dialog button (OK)
+        alertDialog.setButton(DialogInterface.BUTTON_POSITIVE, "OK",
+                new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        // Define color of marker icon
+                        BitmapDescriptor defaultMarker =
+                                BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN);
+                        // Extract content from alert dialog
+                        String title = ((EditText) alertDialog.findViewById(R.id.etTitle)).
+                                getText().toString();
+                        String snippet = ((EditText) alertDialog.findViewById(R.id.etSnippet)).
+                                getText().toString();
+                        // Creates and adds marker to the map
+                        Marker marker = map.addMarker(new MarkerOptions()
+                                .position(point)
+                                .title(title)
+                                .snippet(snippet)
+                                .icon(getASpeechBubble(title)));
+                        marker.setDraggable(true);
+
+                        dropPinEffect(marker);
+
+                    }
+                });
+
+        // Configure dialog button (Cancel)
+        alertDialog.setButton(DialogInterface.BUTTON_NEGATIVE, "Cancel",
+                new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface dialog, int id) { dialog.cancel(); }
+                });
+
+        // Display the dialog
+        alertDialog.show();
+    }
+
+    private BitmapDescriptor getASpeechBubble(String title){
+        IconGenerator iconGenerator = new IconGenerator(MapDemoActivity.this);
+
+        // Possible color options:
+        // STYLE_WHITE, STYLE_RED, STYLE_BLUE, STYLE_GREEN, STYLE_PURPLE, STYLE_ORANGE
+        iconGenerator.setStyle(IconGenerator.STYLE_GREEN);
+        // Swap text here to live inside speech bubble
+        Bitmap bitmap = iconGenerator.makeIcon(title);
+        // Use BitmapDescriptorFactory to create the marker
+        return BitmapDescriptorFactory.fromBitmap(bitmap);
+    }
+
+    private void dropPinEffect(final Marker marker) {
+        // Handler allows us to repeat a code block after a specified delay
+        final android.os.Handler handler = new android.os.Handler();
+        final long start = SystemClock.uptimeMillis();
+        final long duration = 1500;
+
+        // Use the bounce interpolator
+        final android.view.animation.Interpolator interpolator =
+                new BounceInterpolator();
+
+        // Animate marker with a bounce updating its position every 15ms
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                long elapsed = SystemClock.uptimeMillis() - start;
+                // Calculate t for bounce based on elapsed time
+                float t = Math.max(
+                        1 - interpolator.getInterpolation((float) elapsed
+                                / duration), 0);
+                // Set the anchor
+                marker.setAnchor(0.5f, 1.0f + 14 * t);
+
+                if (t > 0.0) {
+                    // Post this event again 15ms from now.
+                    handler.postDelayed(this, 15);
+                } else { // done elapsing, show window
+                    marker.showInfoWindow();
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onMarkerDragStart(Marker marker) {
+
+    }
+
+    @Override
+    public void onMarkerDrag(Marker marker) {
+
+    }
+
+    @Override
+    public void onMarkerDragEnd(Marker marker) {
+        PushUtil.sendPushNotification(marker, CHANNEL_NAME);
+    }
+
 
     // Define a DialogFragment that displays the error dialog
     public static class ErrorDialogFragment extends android.support.v4.app.DialogFragment {
